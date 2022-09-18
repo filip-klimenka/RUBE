@@ -27,7 +27,8 @@ class RawDataCleaner:
                        period_in_weeks=None,
                        min_visits=0,
                        min_baskets=0,
-                       min_average_spend=0):
+                       min_average_spend=0,
+                       remove_singleton_baskets=True):
         """
         :param raw: (dataframe) raw data set
         :param max_accepted_quantity: (int) if truncate is false remove all entries with more than max_accepted_quantity
@@ -44,7 +45,7 @@ class RawDataCleaner:
         self.data, self.n_samples, self.stock_vocab, self.n_periods, self.n_users, self.max_seen_q = \
             transform_data(self.raw_data, stock_vocab_size, user_vocab_size, truncate, period_in_weeks or CENTURY,
                            max_quantity=max_accepted_quantity, min_visits=min_visits, min_baskets=min_baskets,
-                           min_average_spend=min_average_spend)
+                           min_average_spend=min_average_spend, remove_singleton_baskets=remove_singleton_baskets)
 
     def augment_raw(self):
         """
@@ -80,8 +81,8 @@ def transform_data(data, stock_vocab_size, user_vocab_size, truncate, period_wee
 
     data = _aggregate_observationally_eq_lines(data)
 
-    if remove_singleton_baskets:
-        data = _remove_singletons(data)
+    data = _handle_bundle_counts(data, remove_singletons=remove_singleton_baskets)
+
     if price_segments > 1:
         data = _segment_prices(data, price_segments=price_segments)
 
@@ -209,7 +210,7 @@ def _aggregate_observationally_eq_lines(data):
     return out
 
 
-def _remove_singletons(data):
+def _handle_bundle_counts(data, remove_singletons=False):
     data_cost = data.copy()
     data_cost['Cost'] = data.Price * data.Quantity
     gb_i = data_cost.groupby(['Invoice'])
@@ -220,9 +221,11 @@ def _remove_singletons(data):
                  f"${gb_i.Cost.sum().mean():2.2f} with {int(counts.mean())} items.")
     logging.info(f"The most expensive invoice costs ${gb_i.Cost.sum().max():2.2f}. "
                  f"The biggest contains {int(counts.max())} items.")
-    logging.info(
-        f'Of {len(data)} purchase records, we remove {sum(data.n_codes <= 1)} which describe singleton baskets.')
-    return data[data.n_codes > 1]
+    if remove_singletons:
+        logging.info(
+            f'Of {len(data)} purchase records, we remove {sum(data.n_codes <= 1)} which describe singleton baskets.')
+        return data[data.n_codes > 1]
+    return data
 
 
 def _segment_prices(df, price_segments=4):

@@ -35,12 +35,12 @@ def propose_new(user_token, basket, prices, period, raw_params, keys, max_q):
     :param max_q: biggest permitted quantity that can be drawn
     :return: (the next basket, its utility, indicator variable for whether it differs from its predecessor).
     """
-    key1, key2 = keys
-    choices = build_signal_set(basket, key1, max_q, 1, replace=False)
+    key0, key1, key2, key3 = keys
+    choices = build_signal_set(basket, (key0, key1, key2), max_q, 1, replace=False)
     utilities = rube.model.model.qua_model(raw_params, choices, prices, period, user_token)
     ratio = jnp.exp(utilities[1] - utilities[0])
-    rand = jax.random.uniform(key2)
-    idx = jnp.int32(jnp.logical_or(ratio > 1, rand < ratio)[0])
+    rand = jax.random.uniform(key3)
+    idx = jnp.int32(rand < ratio)[0]  # trivially true if ratio > 1, of course
     return choices[idx], utilities[idx], idx
 
 
@@ -61,6 +61,7 @@ def generate_draws(params, max_q, draw_key, u, bs, p, t, n_samples=5000, min_ite
     """
     params = params.copy()
     params['A_'] = params['A_'][:bs[0].shape[0]]
+    assert (rube.model.model.load_params(params)['A'][0] == 0).all()
 
     baskets, uts, idxs = jax.vmap(lambda b: scan_draws(b, draw_key, params, min_iters, sample_freq, n_samples, max_q, u, p, t))(bs)
 
@@ -77,8 +78,8 @@ def generate_draws(params, max_q, draw_key, u, bs, p, t, n_samples=5000, min_ite
 @jax.tree_util.Partial(jax.jit, static_argnums=(1))
 def next_step(params, max_q, u, prices, period, carry, x):
     basket, draw_key = carry
-    draw_key, subkey1, subkey2 = jax.random.split(draw_key, num=3)
-    keys = (subkey1, subkey2)
+    draw_key, subkey1, subkey2, subkey3, subkey4 = jax.random.split(draw_key, num=5)
+    keys = (subkey1, subkey2, subkey3, subkey4)
     basket, ut, idx = propose_new(u, basket, prices, period, params, keys, max_q)
     return (basket, draw_key), (basket, ut, idx)
 

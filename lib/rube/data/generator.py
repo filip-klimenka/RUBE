@@ -10,6 +10,10 @@ import logging
 class Generator:
     def __init__(self, data, batch_size, neg_samples, max_quantity, stock_vocab, n_periods, replace=True, user_vocab_size=None,
                  repeat_holdout=1, seed=None, shuffle=False, test_size=0.02):
+        if seed is not None:
+            self.key = jax.random.PRNGKey(seed)
+        else:
+            self.key = jax.random.PRNGKey(np.random.randint(10000000))
         self.batch_size = batch_size
         self.neg_samples = neg_samples
         self.max_quantity = max_quantity
@@ -36,8 +40,6 @@ class Generator:
         self.n_samples = self.training_data['q'].shape[0]
         self.n_periods = n_periods
         self._index = 0
-        if seed is not None:
-            np.random.seed(seed)
 
     def calc_effective_test_size(self, nrows):
         if self.test_size >= 1:
@@ -122,16 +124,19 @@ class Generator:
         :return: a batch of signal sets in the form of a 3d array
         """
         if randomize:
-            keys = jnp.array([jax.random.PRNGKey(x) for x in np.random.randint(low=1, high=10000000, size=(baskets.shape[0],))])
+            keys = jax.random.split(self.key, 3 * baskets.shape[0] + 1)
+            self.key = keys[-1]
+            keys = keys[:-1].reshape(baskets.shape[0], 3, 2)
             return jax.vmap(build_signal_set, in_axes=(0, 0, None, None, None))(jnp.array(baskets),
                                                                                 keys,
                                                                                 self.max_quantity,
                                                                                 self.neg_samples,
                                                                                 self.replace)
         else:
-            key = jax.random.PRNGKey(np.random.randint(low=1, high=10000000))
+            keys = jax.random.split(self.key, 4)
+            self.key = keys[-1]
             return jax.vmap(build_signal_set, in_axes=(0, None, None, None, None))(jnp.array(baskets),
-                                                                                   key,
+                                                                                   keys[:-1],
                                                                                    self.max_quantity,
                                                                                    self.neg_samples,
                                                                                    self.replace)
@@ -143,14 +148,22 @@ def normalise(x):
 
 
 @jax.tree_util.Partial(jax.jit, static_argnums=(2, 3, 4))
-def build_signal_set(basket, key, max_quantity, neg_samples, replace):
+def build_signal_set(basket, keys, max_quantity, neg_samples, replace):
+    '''
+    :param basket: an initial basket
+    :param keys: 3 separate keys to use for randomization
+    :param max_quantity: max quantity of items to be added to negative samples
+    :param neg_samples: number of alternative baskets (negative samples) to generate
+    :param replace: if True, sample with replacement, this is much faster
+    :return: jnp.ndarray containing the initial basket and negative samples stacked over axis 0
+    '''
     nonzero = (basket > 0)[1:].astype(jnp.int8)
     poss_neg_samples = (1 - nonzero)
     # we start `rng` at 1 so that we don't pick UNK as a positive or negative item:
     rng = jnp.arange(1, basket.shape[0])
-    item_index = jax.random.choice(key, rng, p=normalise(nonzero))
-    fake_item_idx = jax.random.choice(key, rng, (neg_samples,), replace=replace, p=normalise(poss_neg_samples))
-    fake_item_quantity = jax.random.choice(key, jnp.arange(1, max_quantity+1), replace=True, shape=(neg_samples,))
+    item_index = jax.random.choice(keys[0], rng, p=normalise(nonzero))
+    fake_item_idx = jax.random.choice(keys[1], rng, (neg_samples,), replace=replace, p=normalise(poss_neg_samples))
+    fake_item_quantity = jax.random.choice(keys[2], jnp.arange(1, max_quantity+1), replace=True, shape=(neg_samples,))
 
     bout = jnp.repeat(basket[None, :], neg_samples + 1, axis=0)
 

@@ -49,7 +49,15 @@ parser.add_argument('--period_in_weeks', type=int, default=5200,
 parser.add_argument('--seed', type=int, default=42, help='Random seed')
 parser.add_argument('--delete_unks', default=False, action='store_true',
                     help='proceed as if purchases of goods that are too rare to track (of UNKS), never happened.')
+parser.add_argument('--keep_singleton_baskets', default=False, action='store_true',
+                    help='When argument is present, do not delete singleton baskets')
 args = parser.parse_args()
+
+
+args.remove_singleton_baskets = not args.keep_singleton_baskets
+kwargs = vars(args)
+for key in ['keep_singleton_baskets']:
+    kwargs.pop(key, None)
 
 fits_dir = args.fit_dir or STANDARD_FIT_DIR
 fit_dir = pathlib.Path(fits_dir) / time.strftime("%Y%m%d-%H%M%S")
@@ -72,7 +80,8 @@ def main():
              neg_samples=args.ns, seed=args.seed, repeat_holdout=args.repeat_holdout, test_size=args.holdout_size,
              n_lines=args.dataset_lines, period_in_weeks=args.period_in_weeks,
              min_visits=args.min_visits, min_baskets=args.min_baskets, min_average_spend=args.min_average_spend,
-             begin_week=args.begin_week, end_week=args.end_week, max_accepted_quantity=args.max_quantity)
+             begin_week=args.begin_week, end_week=args.end_week, max_accepted_quantity=args.max_quantity,
+             remove_singleton_baskets=args.remove_singleton_baskets)
 
     model = RubeJaxModel(stock_vocab_size=dg.get_stock_vocab_size(), embedding_dim=args.K, n_periods=dg.get_n_periods(),
                          user_vocab_size=dg.get_user_vocab_size(), seed=args.seed, step_size=args.step_size)
