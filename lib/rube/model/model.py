@@ -126,7 +126,6 @@ class RubeJaxModel:
                              f'TL= {self.losses[-1]:2.3f}')
             if fit_dir:
                 trained_params = unpack_optimizer_state(self.opt_state)
-                # TODO: will the line below fail if there is a 'ragged' batch of length less than n_iter ?
                 loss_df = pd.DataFrame(self.losses, columns=['loss']).groupby(np.arange(n_iter * (epoch + 1)) // n_iter).mean()
                 train_acc_df =  pd.DataFrame(self.train_accuracies, columns=['train_accuracy']).groupby(np.arange(n_iter * (epoch + 1)) // n_iter).mean()
                 test_acc_df = pd.DataFrame(self.test_accuracies, columns=['test_accuracy'])
@@ -252,7 +251,7 @@ def model_loss(params, x, model):
     return batch_loss
 
 
-def save_embeddings_tsv(params, dg, description_field, embedding_file='A_embeddings.tsv', vocab_file='A_vocab.txt'):
+def save_embeddings_tsv(params, dg, embedding_file='A_embeddings.tsv', vocab_file='A_vocab.txt'):
     with open(embedding_file, 'w+') as tsvfile:
         writer = csv.writer(tsvfile, delimiter='\t')
         writer.writerows(params['A'])
