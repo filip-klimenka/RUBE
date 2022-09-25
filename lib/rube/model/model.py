@@ -183,7 +183,7 @@ def positivize(params):
     b = jnp.dot(flipper, params['b'])
     c = jnp.dot(flipper, params['c'])
     params.update({'A': A, 'b': b, 'c': c})
-    return params
+    return {k: np.array(v) for k, v in params.items()}
 
 
 @jax.jit

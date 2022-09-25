@@ -41,6 +41,6 @@ def nearest_neigbours(stock_code, dg, model):
     distance_df.set_index('product_token', inplace=True)
 
     df = df.join(distance_df, how='left')
-    return df.sort_values(by='Similarity', ascending=False).reset_index().set_index('StockCode')
+    return df.reset_index().set_index('StockCode')  # .sort_values(by='Similarity', ascending=False)
 
 
