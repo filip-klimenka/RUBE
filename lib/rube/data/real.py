@@ -35,7 +35,8 @@ class RealDataGenerator(Generator):
                                user_vocab_size=user_vocab_size,
                                min_visits=min_visits, min_baskets=min_baskets, min_average_spend=min_average_spend,
                                truncate=truncate,
-                               period_in_weeks=period_in_weeks)
+                               period_in_weeks=period_in_weeks,
+                               remove_singleton_baskets=kwargs['remove_singleton_baskets'])
 
         t = populate_t(cleaner.data, cleaner.n_samples)
         preprocessed_data = {'q': populate_q(cleaner.data, cleaner.n_samples, len(cleaner.stock_vocab)),
@@ -46,7 +47,7 @@ class RealDataGenerator(Generator):
         super(RealDataGenerator, self).__init__(preprocessed_data, batch_size, neg_samples, cleaner.max_seen_q,
                                                 stock_vocab=cleaner.stock_vocab, n_periods=cleaner.n_periods,
                                                 user_vocab_size=cleaner.n_users,
-                                                seed=seed, **kwargs)
+                                                seed=seed, repeat_holdout=kwargs['repeat_holdout'], test_size=kwargs['test_size'])
 
         self.raw_data = None
         if save_raw:

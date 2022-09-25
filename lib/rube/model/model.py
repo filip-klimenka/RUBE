@@ -7,7 +7,7 @@ import logging
 import pickle
 import jax
 import jax.numpy as jnp
-from jax.experimental.optimizers import adam, unpack_optimizer_state, pack_optimizer_state
+from jax.example_libraries.optimizers import adam, unpack_optimizer_state, pack_optimizer_state
 
 DEFAULT_KEY = jax.random.PRNGKey(42)
 
@@ -183,7 +183,7 @@ def positivize(params):
     b = jnp.dot(flipper, params['b'])
     c = jnp.dot(flipper, params['c'])
     params.update({'A': A, 'b': b, 'c': c})
-    return params
+    return {k: np.array(v) for k, v in params.items()}
 
 
 @jax.jit
