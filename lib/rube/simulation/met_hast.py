@@ -6,21 +6,12 @@ import rube.model
 from rube.data.generator import build_signal_set
 
 
-def build_seed_basket(cleaner, key, basket_size=6, n_products=None, period_token=0):
+def build_seed_basket(max_quantity, key, n_products, basket_size):
     # by setting period_token to zero, we simulate in the UNK (average) period of the data
-    df = cleaner.raw_data
-    user_token = jax.random.choice(key, df['user_token'].unique().shape[0])[jnp.newaxis]
-    vocab_size = n_products or len(cleaner.stock_vocab)
-    basket = jnp.zeros(vocab_size, dtype=np.int8)
+    basket = jnp.zeros(n_products, dtype=np.int8)
     basket_tokens = jax.random.choice(key, np.arange(1, n_products), (basket_size,), replace=False)
-    basket = basket.at[basket_tokens].set(jax.random.choice(key, jnp.arange(1, cleaner.max_seen_q), (basket_size,)))
-    prices = np.zeros((1, len(cleaner.stock_vocab)), dtype=np.float32)
-
-    prices[:, cleaner.data['product_token']] = cleaner.data['MeanPrice']
-
-    if n_products:
-        prices = prices[:, :n_products]
-    return user_token, basket, prices, jnp.array([period_token])
+    basket = basket.at[basket_tokens].set(jax.random.choice(key, jnp.arange(1, max_quantity), (basket_size,)))
+    return basket
 
 
 @jax.tree_util.Partial(jax.jit, static_argnums=(6,))
@@ -44,14 +35,14 @@ def propose_new(user_token, basket, prices, period, raw_params, keys, max_q):
     return choices[idx], utilities[idx], idx
 
 
-def generate_draws(params, max_q, draw_key, u, bs, p, t, n_samples=5000, min_iters=2500, sample_freq=50):
+def generate_draws(params, max_q, draw_key, user_tokens, bs, p, t, n_samples=5000, min_iters=2500, sample_freq=50):
     """
     :param params: model parameters
     :param max_q: biggest permitted quantity that can be drawn
     :param draw_key: jaxkey
-    :param u: user token. So far, this has been constant and equal to zero in applications.
-    :param bs: we are interested in proceeding from these baskets (of various sizes) to another, following a Markov chain
-    which settles down into an ergodic distribution equal to the true distribution of baskets.
+    :param user_tokens: a random selection of user tokens available to the model, one for each seed bundle
+    :param bs: int array of shape (num_streams, vocab_size) From these seed bundles (potentially of various sizes)
+    we derive a series of others, with a Markov chain whith ergodic distribution = the true distribution of bundles.
     :param p: the prices of the goods which are in force, a jnp array.
     :param t: a period token
     :param n_samples: number of baskets to simulate
@@ -62,17 +53,15 @@ def generate_draws(params, max_q, draw_key, u, bs, p, t, n_samples=5000, min_ite
     params = params.copy()
     params['A_'] = params['A_'][:bs[0].shape[0]]
     assert (rube.model.model.load_params(params)['A'][0] == 0).all()
-
-    baskets, uts, idxs = jax.vmap(lambda b: scan_draws(b, draw_key, params, min_iters, sample_freq, n_samples, max_q, u, p, t))(bs)
+    scanner = lambda b, u: scan_draws(b, draw_key, params, min_iters, sample_freq, n_samples, max_q, u, p, t)
+    baskets, utilities, users = jax.vmap(scanner)(bs, user_tokens)
 
     n_threads, vocab_size = bs.shape
     merged_data = baskets.reshape(n_threads * n_samples, vocab_size)
+    merged_users = users.reshape(n_threads * n_samples)
+    merged_uts = utilities.reshape(n_threads * n_samples)
 
-    ps = jnp.repeat(p, merged_data.shape[0], axis=0)
-    ts = jnp.repeat(t, merged_data.shape[0], axis=0)
-    us = jnp.repeat(u, merged_data.shape[0], axis=0)
-
-    return {'q': merged_data, 'p': ps, 't': ts, 'u': us}
+    return merged_data, merged_users, merged_uts
 
 
 @jax.tree_util.Partial(jax.jit, static_argnums=(1))
@@ -81,7 +70,7 @@ def next_step(params, max_q, u, prices, period, carry, x):
     draw_key, subkey1, subkey2, subkey3, subkey4 = jax.random.split(draw_key, num=5)
     keys = (subkey1, subkey2, subkey3, subkey4)
     basket, ut, idx = propose_new(u, basket, prices, period, params, keys, max_q)
-    return (basket, draw_key), (basket, ut, idx)
+    return (basket, draw_key), (basket, ut, u)
 
 
 @jax.tree_util.Partial(jax.jit, static_argnums=(0, 2))
@@ -99,5 +88,5 @@ def scan_draws(init_basket, init_key, params, min_iter, sample_freq, n_samples, 
     # Burn-in loop
     carry, (_, _, _) = jax.lax.scan(init_scan_fn, init_carry, None, length=min_iter)
     # Actual draws
-    _, (baskets, uts, idxs) = jax.lax.scan(scan_fn, carry, None, length=n_samples)
-    return baskets, uts, idxs
+    _, (baskets, uts, users) = jax.lax.scan(scan_fn, carry, None, length=n_samples)
+    return baskets, uts, users

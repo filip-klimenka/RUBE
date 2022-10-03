@@ -13,7 +13,7 @@ DEFAULT_KEY = jax.random.PRNGKey(42)
 
 
 class RubeJaxModel:
-    def __init__(self, stock_vocab_size, embedding_dim, n_periods=1, step_size=0.01, user_vocab_size=1, fn='qua', load_model=None, seed=None):
+    def __init__(self, stock_vocab_size=None, embedding_dim=None, n_periods=1, step_size=0.01, user_vocab_size=1, fn='qua', load_model=None, seed=None):
         '''
         :param stock_vocab_size: (int) maximum number of products to encode, must match argument by the same name passed
                                        to the data generator
@@ -26,17 +26,25 @@ class RubeJaxModel:
         :param load_model: (string or None) if not None, load file stored at string containing an optimiser state (for hot start)
         :param seed: (int) random seed for jax
         '''
-        self.stock_vocab_size = stock_vocab_size
-        self.embedding_dim = embedding_dim
-        self.n_periods = n_periods
-        self.user_vocab_size = user_vocab_size
-        self.model = fn if callable(fn) else qua_model if fn == 'qua' else old_model
+        if (stock_vocab_size is None or embedding_dim is None or n_periods is None or user_vocab_size is None) and load_model is None:
+            raise ValueError(f'Please provide at least one of a prefit model, or stock_vocab_size, embedding_dim, n_periods and user_vocab_size')
+        self.model = fn if callable(fn) else qua_model
         self.opt_init, self.opt_update, self.get_params = adam(step_size=step_size)
         if load_model is not None:
             saved_state = pickle.load(open(load_model, 'rb'))
             self.opt_state = pack_optimizer_state(saved_state)
             self.params = self.get_params(self.opt_state)
+            fit_size = self.params['A_'].shape[0]
+            self.stock_vocab_size = min(stock_vocab_size, fit_size) if stock_vocab_size else fit_size
+            self.params['A_'] = self.params['A_'][:self.stock_vocab_size]
+            self.embedding_dim = self.params['A_'].shape[1]
+            self.n_periods = self.params['c_'].shape[1] if 'c_' in self.params else 1
+            self.user_vocab_size = self.params['lb_'].shape[1]
         else:
+            self.stock_vocab_size = stock_vocab_size
+            self.embedding_dim = embedding_dim
+            self.n_periods = n_periods
+            self.user_vocab_size = user_vocab_size
             self.params = self._initialize_model(seed=seed)
             self.opt_state = self.opt_init(self.params)
         self.train_accuracies = []
