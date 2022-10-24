@@ -89,7 +89,7 @@ def populate_p(data, n_samples, stock_vocab_size, t):
 
 
 def populate_u(data, n_samples):
-    u = np.zeros((n_samples, 1))
-    u[data['invoice_token'], :] = data['user_token'][:, np.newaxis]
+    u = np.zeros((n_samples,), dtype=np.int32)
+    u[data['invoice_token']] = data['user_token']
     u = u.astype(np.int32)
     return u

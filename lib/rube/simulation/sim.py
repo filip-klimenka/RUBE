@@ -67,7 +67,7 @@ class Simulation:
         """
         Prepare the simulation's results as an input for a Generator() object
         """
-        ps = jnp.repeat(self.get_price_vector(), bundles.shape[0], axis=0)
+        ps = self.get_price_vector()
         ts = jnp.repeat(self.period_token, bundles.shape[0], axis=0)
         assert us.shape == ts.shape
         return {'q': bundles, 'p': ps, 't': ts, 'u': us}

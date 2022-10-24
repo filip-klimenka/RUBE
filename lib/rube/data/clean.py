@@ -101,6 +101,8 @@ def transform_data(data, stock_vocab_size, user_vocab_size, truncate, period_wee
 
     invoices = np.unique(data.Invoice, return_counts=False)
 
+    logging.info(f"Finally retaining {len(invoices)} consumption bundles")
+
     return data, len(invoices), stockcode_counts, n_periods + 1, len(user_counts), data.Quantity.max()
 
 

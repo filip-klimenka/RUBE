@@ -83,11 +83,12 @@ class RubeJaxModel:
         return {'A_': A, 'lb_': b, 'c_': c, 'ld_1': log_d_1, 'ld_2': log_d_2, 'ld_3': log_d_3}
 
     def model_predict(self, x):
-        qs = x[0]['quantity']
-        p  = x[0]['prices']
-        t  = x[0]['period']
-        u  = x[0]['users'] if 'users' in x[0].keys() else jnp.zeros((qs.shape[0], 1), dtype=jnp.int8)
-        logits = jax.vmap(self.model, in_axes=(None, 0, 0, 0, 0))(self.params, qs, p, t, u)
+        qs = x['quantity']
+        p  = x['prices']
+        n_prices, _, n_goods = p.shape
+        t  = x['period']
+        u  = x.get('users', jnp.zeros_like(t, dtype=jnp.int8))
+        logits = jax.vmap(self.model, in_axes=(None, 0, 0 if n_prices > 1 else None, 0, 0))(self.params, qs, p, t, u)
         return jax.nn.softmax(logits, axis=1)
 
     def accuracy(self, x):
@@ -96,11 +97,13 @@ class RubeJaxModel:
         :return: accuracy of the fitted model against x
         """
         _biggest = lambda a: jnp.argmax(a, axis=1)
-        labels = x[1]['output_1']
-        return jnp.mean(_biggest(self.model_predict(x)) == _biggest(labels))
+        # we arranged things so that the truth is in the first place of this array:
+        return jnp.mean(_biggest(self.model_predict(x)) == 0)
 
     def update(self, step, x):
-        loss, grads = jax.value_and_grad(model_loss)(self.get_params(self.opt_state), x, self.model)
+        n_prices, _, n_goods = x['prices'].shape
+        price_dim = 0 if n_prices > 1 else None
+        loss, grads = jax.value_and_grad(model_loss)(self.get_params(self.opt_state), x, self.model, price_dim)
         # Make sure grads are not nan because these are propagated
         grads = {key: jnp.nan_to_num(grads[key]) for key in grads.keys()}
         self.opt_state = self.opt_update(step, grads, self.opt_state)
@@ -230,31 +233,30 @@ def psi(params, np_range=None):
     if np_range is not None:
         A = A[np_range]
     b = params['b']
-    return (A @ A.T, A @ b, params['d_1'], params['d_2'], params['d_3'].T * A[:, 0])
+    return A @ A.T, A @ b, params['d_1'], params['d_2'], params['d_3'].T * A[:, 0]
 
 
 @jax.jit
-def loss(logits, labels):
+def loss(logits):
     norm_logits = jax.nn.log_softmax(logits, axis=1)
-    loss = jnp.mean(-norm_logits[jnp.nonzero(labels, size=logits.shape[0])])
+    # we arranged things so that the truth is in the first place of the sample dimension, but we average across batch
+    loss = jnp.mean(-norm_logits[:, 0])
     return loss
 
 
-@jax.tree_util.Partial(jax.jit, static_argnums=2)
-def model_loss(params, x, model):
+@jax.tree_util.Partial(jax.jit, static_argnums=(2, 3))
+def model_loss(params, x, model, price_dim):
     # partial tells jax that we want to "trace" params and x because they will change
     # but we tell it that model (arg #2) is static meaning jax can assume it won't
     # change over calls of this function.
-    qs = x[0]['quantity']
-    p  = x[0]['prices']
-    t  = x[0]['period']
-    u  = x[0]['users'] if 'users' in x[0].keys() else jnp.zeros((qs.shape[0], 1), dtype=jnp.int8)
-    labels = x[1]['output_1']
+    qs = x['quantity']
+    p  = x['prices']
+    t  = x['period']
+    u  = x.get('users', jnp.zeros_like(t, dtype=jnp.int8))
     # in_axes tells jax which dimension is the batch dimension for each argument
-    # None implies that there is no batch dimension for that argument (so use the
-    # same value for each iteration)
-    logits = jax.vmap(model, in_axes=(None, 0, 0, 0, 0))(params, qs, p, t, u)
-    batch_loss = loss(logits, labels)
+    # None implies that there is no batch dimension for that argument (so use the same value for each iteration)
+    logits = jax.vmap(model, in_axes=(None, 0, price_dim, 0, 0))(params, qs, p, t, u)
+    batch_loss = loss(logits)
 
     return batch_loss
 
