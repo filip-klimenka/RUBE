@@ -53,43 +53,64 @@ parser.add_argument('--keep_singleton_baskets', default=False, action='store_tru
                     help='When argument is present, do not delete singleton baskets')
 args = parser.parse_args()
 
-
+# code to reconfigure args (currently it does only one thing)
 args.remove_singleton_baskets = not args.keep_singleton_baskets
 kwargs = vars(args)
 for key in ['keep_singleton_baskets']:
     kwargs.pop(key, None)
 
-fits_dir = args.fit_dir or STANDARD_FIT_DIR
-fit_dir = pathlib.Path(fits_dir) / time.strftime("%Y%m%d-%H%M%S")
-os.makedirs(fit_dir)
 
-logging.info(f"Fit directory is at {fit_dir}.")
-
-
-def main():
-    if args.dataset == 'uci':
-        gen = UCIGenerator
+def get_data_generator(dataset_string):
+    if dataset_string == 'uci':
         logging.info(f"Using the 'UCI archive, online_retail_II.xlsx' dataset.\n")
+        return UCIGenerator
     else:
         raise NotImplementedError
+
+    def prepare_fitting_directory(option_args):
+        fits_dir = option_args.fit_dir or STANDARD_FIT_DIR
+        fdir = pathlib.Path(fits_dir) / time.strftime("%Y%m%d-%H%M%S")
+        os.makedirs(fdir)
+        with open(fdir / 'parameters.json', 'w+') as param_file:
+            json.dump(vars(option_args), param_file)
+        logging.info(f"The fitting directory is at {fdir}.")
+        return fdir
 
     if args.delete_unks:
         raise NotImplementedError
 
-    dg = gen(stock_vocab_size=args.stock_vocab_size, user_vocab_size=args.user_vocab_size, batch_size=args.mb,
-             neg_samples=args.ns, seed=args.seed, repeat_holdout=args.repeat_holdout, test_size=args.holdout_size,
-             n_lines=args.dataset_lines, period_in_weeks=args.period_in_weeks,
-             min_visits=args.min_visits, min_baskets=args.min_baskets, min_average_spend=args.min_average_spend,
-             begin_week=args.begin_week, end_week=args.end_week, max_accepted_quantity=args.max_quantity,
-             remove_singleton_baskets=args.remove_singleton_baskets)
+# create logger
+warnings.simplefilter("ignore")
+logging.basicConfig(format='%(asctime)s %(levelname)s:%(message)s', level=logging.INFO, force=True)
 
-    model = RubeJaxModel(stock_vocab_size=dg.get_stock_vocab_size(), embedding_dim=args.K, n_periods=dg.get_n_periods(),
-                         user_vocab_size=dg.get_user_vocab_size(), seed=args.seed, step_size=args.step_size)
+fit_dir = prepare_fitting_directory(args)
+gen = get_data_generator(args.dataset)
 
-    with open(fit_dir / 'parameters.json', 'w+') as param_file:
-        json.dump(vars(args), param_file)
+dg = gen(stock_vocab_size=args.stock_vocab_size,
+         user_vocab_size=args.user_vocab_size,
+         batch_size=args.mb,
+         neg_samples=args.ns,
+         period_in_weeks=args.period_in_weeks,
+         seed=args.seed,
+         test_size=args.holdout_size,
+         repeat_holdout=args.repeat_holdout,
+         begin_week=args.begin_week,
+         end_week=args.end_week,
+         n_lines=args.dataset_lines,
+         min_visits=args.min_visits,
+         min_baskets=args.min_baskets,
+         min_average_spend=args.min_average_spend,
+         max_accepted_quantity=args.max_quantity,
+         remove_singleton_baskets=args.remove_singleton_baskets)
 
-    model.training_loop(dg, epochs=args.n_epochs, fit_dir=fit_dir)
+model = RubeJaxModel(stock_vocab_size=dg.get_stock_vocab_size(),
+                     n_periods=dg.get_n_periods(),
+                     user_vocab_size=dg.get_user_vocab_size(),
+                     embedding_dim=args.K,
+                     seed=args.seed,
+                     step_size=args.step_size)
+
+model.training_loop(dg, epochs=args.n_epochs, fit_dir=fit_dir)
 
 
 if __name__ == "__main__":

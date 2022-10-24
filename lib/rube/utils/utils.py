@@ -1,9 +1,9 @@
 import jax
-import jax.numpy as jnp
 import numpy as np
 import pandas as pd
+from jax import numpy as jnp
 
-from rube.model.model import load_params, positivize
+from rube.model.model import positivize, load_params
 
 
 def normalise_matrix(mat):
@@ -42,5 +42,3 @@ def nearest_neigbours(stock_code, dg, model):
 
     df = df.join(distance_df, how='left')
     return df.reset_index().set_index('StockCode')  # .sort_values(by='Similarity', ascending=False)
-
-

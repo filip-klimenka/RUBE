@@ -25,11 +25,11 @@ requirements:
 test:
   imports:
   source_files:
-    - tests/tests.py
+    - tests/test_model.py
   requires:
     - pytest
   commands:
-    - pytest tests/tests.py
+    - pytest tests/test_model.py
 
 about:
   home:  https://github.com/jeremy-large/RUBE

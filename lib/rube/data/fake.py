@@ -15,9 +15,9 @@ class FakeDataGenerator(Generator):
                                                 user_vocab_size=user_vocab_size, seed=seed, **kwargs)
 
     def build_samples(self, n_samples, stock_vocab_size, n_periods, user_vocab_size, context_size, max_quantity, generate_users):
-        q = np.zeros((n_samples, stock_vocab_size), dtype=np.float32)
+        q = np.zeros((n_samples, stock_vocab_size), dtype=np.int8)
         p = np.zeros((n_samples, stock_vocab_size), dtype=np.float32)
-        t = np.zeros((n_samples, 1), dtype=np.int32)
+        t = np.zeros((n_samples,), dtype=np.int32)
         for i in range(n_samples):
             items = np.random.randint(low=1, high=context_size + 1)
             idx = np.random.choice(np.array(list(range(stock_vocab_size,))), size=(items,), replace=False)
@@ -30,7 +30,7 @@ class FakeDataGenerator(Generator):
             t[i] = np.random.randint(1, n_periods)
 
         if generate_users:
-            u = np.random.randint(low=1, high=user_vocab_size, size=(n_samples, 1))
+            u = np.random.randint(low=1, high=user_vocab_size, size=(n_samples,))
             return {'q': q, 'p': p, 't': t, 'u': u}
         else:
             return {'q': q, 'p': p, 't': t}

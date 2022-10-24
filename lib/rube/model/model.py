@@ -13,7 +13,7 @@ DEFAULT_KEY = jax.random.PRNGKey(42)
 
 
 class RubeJaxModel:
-    def __init__(self, stock_vocab_size, embedding_dim, n_periods=1, step_size=0.01, user_vocab_size=1, fn='qua', load_model=None, seed=None):
+    def __init__(self, stock_vocab_size=None, embedding_dim=None, n_periods=1, step_size=0.01, user_vocab_size=1, fn='qua', load_model=None, seed=None):
         '''
         :param stock_vocab_size: (int) maximum number of products to encode, must match argument by the same name passed
                                        to the data generator
@@ -26,17 +26,25 @@ class RubeJaxModel:
         :param load_model: (string or None) if not None, load file stored at string containing an optimiser state (for hot start)
         :param seed: (int) random seed for jax
         '''
-        self.stock_vocab_size = stock_vocab_size
-        self.embedding_dim = embedding_dim
-        self.n_periods = n_periods
-        self.user_vocab_size = user_vocab_size
-        self.model = fn if callable(fn) else qua_model if fn == 'qua' else old_model
+        if (stock_vocab_size is None or embedding_dim is None or n_periods is None or user_vocab_size is None) and load_model is None:
+            raise ValueError(f'Please provide at least one of a prefit model, or stock_vocab_size, embedding_dim, n_periods and user_vocab_size')
+        self.model = fn if callable(fn) else qua_model
         self.opt_init, self.opt_update, self.get_params = adam(step_size=step_size)
         if load_model is not None:
             saved_state = pickle.load(open(load_model, 'rb'))
             self.opt_state = pack_optimizer_state(saved_state)
             self.params = self.get_params(self.opt_state)
+            fit_size = self.params['A_'].shape[0]
+            self.stock_vocab_size = min(stock_vocab_size, fit_size) if stock_vocab_size else fit_size
+            self.params['A_'] = self.params['A_'][:self.stock_vocab_size]
+            self.embedding_dim = self.params['A_'].shape[1]
+            self.n_periods = self.params['c_'].shape[1] if 'c_' in self.params else 1
+            self.user_vocab_size = self.params['lb_'].shape[1]
         else:
+            self.stock_vocab_size = stock_vocab_size
+            self.embedding_dim = embedding_dim
+            self.n_periods = n_periods
+            self.user_vocab_size = user_vocab_size
             self.params = self._initialize_model(seed=seed)
             self.opt_state = self.opt_init(self.params)
         self.train_accuracies = []
@@ -75,11 +83,12 @@ class RubeJaxModel:
         return {'A_': A, 'lb_': b, 'c_': c, 'ld_1': log_d_1, 'ld_2': log_d_2, 'ld_3': log_d_3}
 
     def model_predict(self, x):
-        qs = x[0]['quantity']
-        p  = x[0]['prices']
-        t  = x[0]['period']
-        u  = x[0]['users'] if 'users' in x[0].keys() else jnp.zeros((qs.shape[0], 1), dtype=jnp.int8)
-        logits = jax.vmap(self.model, in_axes=(None, 0, 0, 0, 0))(self.params, qs, p, t, u)
+        qs = x['quantity']
+        p  = x['prices']
+        n_prices, _, n_goods = p.shape
+        t  = x['period']
+        u  = x.get('users', jnp.zeros_like(t, dtype=jnp.int8))
+        logits = jax.vmap(self.model, in_axes=(None, 0, 0 if n_prices > 1 else None, 0, 0))(self.params, qs, p, t, u)
         return jax.nn.softmax(logits, axis=1)
 
     def accuracy(self, x):
@@ -88,11 +97,13 @@ class RubeJaxModel:
         :return: accuracy of the fitted model against x
         """
         _biggest = lambda a: jnp.argmax(a, axis=1)
-        labels = x[1]['output_1']
-        return jnp.mean(_biggest(self.model_predict(x)) == _biggest(labels))
+        # we arranged things so that the truth is in the first place of this array:
+        return jnp.mean(_biggest(self.model_predict(x)) == 0)
 
     def update(self, step, x):
-        loss, grads = jax.value_and_grad(model_loss)(self.get_params(self.opt_state), x, self.model)
+        n_prices, _, n_goods = x['prices'].shape
+        price_dim = 0 if n_prices > 1 else None
+        loss, grads = jax.value_and_grad(model_loss)(self.get_params(self.opt_state), x, self.model, price_dim)
         # Make sure grads are not nan because these are propagated
         grads = {key: jnp.nan_to_num(grads[key]) for key in grads.keys()}
         self.opt_state = self.opt_update(step, grads, self.opt_state)
@@ -222,31 +233,30 @@ def psi(params, np_range=None):
     if np_range is not None:
         A = A[np_range]
     b = params['b']
-    return (A @ A.T, A @ b, params['d_1'], params['d_2'], params['d_3'].T * A[:, 0])
+    return A @ A.T, A @ b, params['d_1'], params['d_2'], params['d_3'].T * A[:, 0]
 
 
 @jax.jit
-def loss(logits, labels):
+def loss(logits):
     norm_logits = jax.nn.log_softmax(logits, axis=1)
-    loss = jnp.mean(-norm_logits[jnp.nonzero(labels, size=logits.shape[0])])
+    # we arranged things so that the truth is in the first place of the sample dimension, but we average across batch
+    loss = jnp.mean(-norm_logits[:, 0])
     return loss
 
 
-@jax.tree_util.Partial(jax.jit, static_argnums=2)
-def model_loss(params, x, model):
+@jax.tree_util.Partial(jax.jit, static_argnums=(2, 3))
+def model_loss(params, x, model, price_dim):
     # partial tells jax that we want to "trace" params and x because they will change
     # but we tell it that model (arg #2) is static meaning jax can assume it won't
     # change over calls of this function.
-    qs = x[0]['quantity']
-    p  = x[0]['prices']
-    t  = x[0]['period']
-    u  = x[0]['users'] if 'users' in x[0].keys() else jnp.zeros((qs.shape[0], 1), dtype=jnp.int8)
-    labels = x[1]['output_1']
+    qs = x['quantity']
+    p  = x['prices']
+    t  = x['period']
+    u  = x.get('users', jnp.zeros_like(t, dtype=jnp.int8))
     # in_axes tells jax which dimension is the batch dimension for each argument
-    # None implies that there is no batch dimension for that argument (so use the
-    # same value for each iteration)
-    logits = jax.vmap(model, in_axes=(None, 0, 0, 0, 0))(params, qs, p, t, u)
-    batch_loss = loss(logits, labels)
+    # None implies that there is no batch dimension for that argument (so use the same value for each iteration)
+    logits = jax.vmap(model, in_axes=(None, 0, price_dim, 0, 0))(params, qs, p, t, u)
+    batch_loss = loss(logits)
 
     return batch_loss
 
